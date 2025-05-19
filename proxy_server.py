@@ -13,10 +13,11 @@ SOCKS5_USERNAME = os.environ.get('SOCKS5_USERNAME')
 SOCKS5_PASSWORD = os.environ.get('SOCKS5_PASSWORD')
 
 APP_LISTEN_PORT = int(os.environ.get('APP_PORT', '5000'))
-
-# Biến môi trường để kiểm soát log chi tiết
 PROXY_VERBOSE_STR = os.environ.get('PROXY_VERBOSE_LOGGING', 'false').lower()
 PROXY_VERBOSE = PROXY_VERBOSE_STR == 'true'
+
+# Đọc API Key từ biến môi trường
+EXPECTED_API_KEY = os.environ.get('PROXY_API_KEY')
 # --- Kết Thúc Đọc Cấu Hình ---
 
 def get_socks_proxy_settings():
@@ -41,7 +42,7 @@ def fetch_final_content_from_url(target_url, client_referer=None):
     else:
         log_prefix += " directly"
     
-    print(log_prefix) # Log thông tin cơ bản của request
+    print(log_prefix)
 
     scraper = cloudscraper.create_scraper(
         browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False},
@@ -67,12 +68,14 @@ def fetch_final_content_from_url(target_url, client_referer=None):
         response_for_content = initial_response
 
         final_url_from_header = None
+        # (Giữ nguyên logic tìm final_url_from_header như cũ)
         if 'Zr-Final-Url' in initial_response_headers:
             final_url_from_header = initial_response_headers['Zr-Final-Url']
         elif initial_response.status_code in [200, 201, 202] and 'Location' in initial_response_headers:
             final_url_from_header = initial_response_headers['Location']
         elif initial_response.status_code >= 300 and initial_response.status_code < 400 and 'Location' in initial_response_headers:
              final_url_from_header = initial_response_headers['Location']
+
 
         if final_url_from_header and final_url_from_header != current_url_after_step1:
             if PROXY_VERBOSE:
@@ -92,25 +95,40 @@ def fetch_final_content_from_url(target_url, client_referer=None):
         if final_status_code == 200:
             content = response_for_content.content
             content_type = response_for_content.headers.get('Content-Type', 'application/octet-stream')
-            if PROXY_VERBOSE: # Chỉ log thành công chi tiết nếu bật verbose
+            if PROXY_VERBOSE:
                 print(f"  SUCCESS: '{target_url}' -> '{final_url_accessed}' (Status: {final_status_code}, Type: {content_type})")
             return content, content_type, final_status_code, None
         else:
             error_msg = f"ERROR: Target URL '{final_url_accessed}' responded with {final_status_code} - {response_for_content.reason} (Original URL: '{target_url}')"
-            print(error_msg) # Luôn log lỗi này
+            print(error_msg)
             return response_for_content.content, \
                    response_for_content.headers.get('Content-Type', 'text/plain'), \
                    final_status_code, \
-                   error_msg # Trả về error_msg để client có thể nhận được nếu cần
+                   error_msg
 
     except Exception as e:
         error_msg = f"CRITICAL_ERROR: Exception while processing '{target_url}': {str(e)}"
-        print(error_msg) # Luôn log lỗi nghiêm trọng
-        print(traceback.format_exc()) # Luôn in traceback để debug
+        print(error_msg)
+        print(traceback.format_exc())
         return None, None, 500, error_msg
 
 @app.route('/')
 def proxy_handler():
+    # --- Xác thực API Key ---
+    if EXPECTED_API_KEY: # Chỉ xác thực nếu PROXY_API_KEY được cấu hình trên server
+        client_api_key = request.headers.get('X-API-Key')
+        if not client_api_key:
+            print(f"AUTH_FAIL: Yêu cầu bị từ chối. Thiếu X-API-Key header. IP: {request.remote_addr}")
+            return Response("Lỗi: Thiếu API key. Vui lòng cung cấp 'X-API-Key' header.", status=401, mimetype='text/plain')
+        
+        if client_api_key != EXPECTED_API_KEY:
+            print(f"AUTH_FAIL: Yêu cầu bị từ chối. API Key không hợp lệ. IP: {request.remote_addr}, Key: '{client_api_key[:10]}...'") # Log một phần key để debug
+            return Response("Lỗi: API key không hợp lệ.", status=403, mimetype='text/plain')
+        
+        if PROXY_VERBOSE:
+            print(f"AUTH_SUCCESS: API Key hợp lệ. IP: {request.remote_addr}")
+    # --- Kết thúc xác thực API Key ---
+
     target_url = request.args.get('url')
     client_referer = request.args.get('referer')
 
@@ -119,14 +137,18 @@ def proxy_handler():
 
     content, content_type, status_code, error_message = fetch_final_content_from_url(target_url, client_referer)
 
-    if error_message and not content: # Lỗi nghiêm trọng, không có content trả về từ target
+    if error_message and not content:
          return Response(error_message, status=status_code or 500, mimetype='text/plain')
     
-    # Ngay cả khi status_code không phải 200 (ví dụ: 404 từ server đích), vẫn trả về content và status_code đó
     return Response(content, status=status_code or 200, mimetype=content_type)
 
 if __name__ == '__main__':
     print(f"Proxy server (chạy trực tiếp, không qua Gunicorn) đang khởi động trên http://0.0.0.0:{APP_LISTEN_PORT}")
+    if EXPECTED_API_KEY:
+        print(f"  API Key Authentication IS ENABLED. Client phải cung cấp 'X-API-Key' header.")
+    else:
+        print(f"  WARNING: API Key Authentication IS DISABLED. Proxy đang mở. (PROXY_API_KEY chưa được thiết lập)")
+    
     if PROXY_VERBOSE:
         print("  VERBOSE logging is ENABLED.")
     else:
