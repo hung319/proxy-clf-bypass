@@ -22,7 +22,8 @@ ENV PROXY_VERBOSE_LOGGING="false"
 # ENV PROXY_API_KEY="" # Ví dụ: "your-secret-api-key-here"
 
 # Expose port mà ứng dụng sẽ lắng nghe bên trong container
-EXPOSE 5000 # Hoặc $APP_PORT nếu Dockerfile hỗ trợ (thường là số cụ thể)
+EXPOSE 5000 
+# Hoặc $APP_PORT nếu Dockerfile hỗ trợ (thường là số cụ thể)
 
 # Lệnh để chạy ứng dụng khi container khởi động
 # Sử dụng /bin/sh -c để cho phép thay thế biến môi trường $APP_PORT
