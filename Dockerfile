@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Biến môi trường cho port ứng dụng (Gunicorn sẽ sử dụng)
+# Giá trị mặc định là 5000, có thể ghi đè lúc `docker run`
 ENV APP_PORT=5000
 # Biến môi trường để kiểm soát log chi tiết của ứng dụng proxy
 ENV PROXY_VERBOSE_LOGGING="false"
@@ -21,7 +22,8 @@ ENV PROXY_VERBOSE_LOGGING="false"
 # ENV PROXY_API_KEY="" # Ví dụ: "your-secret-api-key-here"
 
 # Expose port mà ứng dụng sẽ lắng nghe bên trong container
-EXPOSE 5000
+EXPOSE 5000 # Hoặc $APP_PORT nếu Dockerfile hỗ trợ (thường là số cụ thể)
 
 # Lệnh để chạy ứng dụng khi container khởi động
-CMD ["gunicorn", "--bind", "0.0.0.0:$APP_PORT", "--workers", "2", "--log-level", "warning", "proxy_server:app"]
+# Sử dụng /bin/sh -c để cho phép thay thế biến môi trường $APP_PORT
+CMD ["/bin/sh", "-c", "exec gunicorn --bind \"0.0.0.0:$APP_PORT\" --workers 2 --log-level warning proxy_server:app"]
