@@ -28,10 +28,6 @@ EXPOSE 5000
 # Nên khớp với APP_PORT
 
 # Lệnh để chạy ứng dụng khi container khởi động
-# Sử dụng Uvicorn để chạy ứng dụng FastAPI
-# --host 0.0.0.0 để lắng nghe trên tất cả các interface
-# --port $APP_PORT để sử dụng port từ biến môi trường
-# --workers 1 (Uvicorn thường được chạy với 1 worker process, việc scale được thực hiện bằng cách chạy nhiều container hoặc dùng Gunicorn quản lý Uvicorn workers)
-# Nếu bạn muốn nhiều worker hơn với Uvicorn mà không có Gunicorn, bạn cần xem xét các tùy chọn của Uvicorn hoặc dùng process manager.
-# Mặc định, Uvicorn sẽ chạy với 1 worker.
-CMD ["uvicorn", "proxy_server:app", "--host", "0.0.0.0", "--port", "$APP_PORT"]
+# Sử dụng Gunicorn để quản lý 5 Uvicorn workers
+# /bin/sh -c để đảm bảo biến $APP_PORT được thay thế đúng cách
+CMD ["/bin/sh", "-c", "exec gunicorn proxy_server:app --workers 5 --worker-class uvicorn.workers.UvicornWorker --bind \"0.0.0.0:$APP_PORT\" --log-level warning"]
