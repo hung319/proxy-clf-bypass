@@ -17,10 +17,11 @@ COPY . .
 ENV APP_PORT=5000
 # Biến môi trường để kiểm soát log chi tiết của ứng dụng proxy
 ENV PROXY_VERBOSE_LOGGING="false"
+# Biến môi trường cho API Key (người dùng sẽ cung cấp khi chạy container)
+# ENV PROXY_API_KEY="" # Ví dụ: "your-secret-api-key-here"
 
 # Expose port mà ứng dụng sẽ lắng nghe bên trong container
 EXPOSE 5000
 
 # Lệnh để chạy ứng dụng khi container khởi động
-# Sử dụng Gunicorn làm WSGI server, với log level là warning
 CMD ["gunicorn", "--bind", "0.0.0.0:$APP_PORT", "--workers", "2", "--log-level", "warning", "proxy_server:app"]
