@@ -24,7 +24,8 @@ ENV DEV_MODE="false"
 
 
 # Expose port mà ứng dụng sẽ lắng nghe bên trong container
-EXPOSE 5000 # Nên khớp với APP_PORT
+EXPOSE 5000 
+# Nên khớp với APP_PORT
 
 # Lệnh để chạy ứng dụng khi container khởi động
 # Sử dụng Gunicorn để quản lý 5 Uvicorn workers
