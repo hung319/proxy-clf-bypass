@@ -1,17 +1,14 @@
 from fastapi import FastAPI, Request, Response as FastAPIResponse, Header, Query, HTTPException
-from typing import Optional, Dict, Any
+from typing import Optional
 import os
 import traceback
 import uvicorn
-import cloudscraper
 import asyncio
-import json
 import random
 import time
 from playwright.async_api import async_playwright
 from playwright_stealth import stealth_async
 from fake_useragent import UserAgent
-import re
 
 # Khởi tạo ứng dụng FastAPI
 app = FastAPI(title="Advanced Cloudscraper Proxy API with Turnstile Bypass", version="2.0.0")
@@ -41,19 +38,6 @@ def get_random_user_agent():
     """Tạo user agent ngẫu nhiên"""
     return ua.random
 
-def get_socks_proxy_settings():
-    """Lấy cấu hình SOCKS proxy"""
-    if SOCKS5_PROXY_HOST and SOCKS5_PROXY_PORT:
-        proxy_url_scheme = 'socks5h'
-        auth_part = ''
-        if SOCKS5_USERNAME and SOCKS5_PASSWORD:
-            auth_part = f'{SOCKS5_USERNAME}:{SOCKS5_PASSWORD}@'
-        elif SOCKS5_USERNAME:
-            auth_part = f'{SOCKS5_USERNAME}@'
-        proxy_full_url = f'{proxy_url_scheme}://{auth_part}{SOCKS5_PROXY_HOST}:{SOCKS5_PROXY_PORT}'
-        return {'http': proxy_full_url, 'https': proxy_full_url}
-    return None
-
 def get_playwright_proxy_config():
     """Lấy cấu hình proxy cho Playwright"""
     if SOCKS5_PROXY_HOST and SOCKS5_PROXY_PORT:
@@ -66,256 +50,74 @@ def get_playwright_proxy_config():
         return proxy_config
     return None
 
-async def detect_turnstile_challenge(page):
-    """Phát hiện Turnstile challenge"""
-    try:
-        # Kiểm tra các selector phổ biến của Turnstile
-        turnstile_selectors = [
-            'iframe[src*="challenges.cloudflare.com"]',
-            '[data-sitekey]',
-            '.cf-turnstile',
-            '#cf-turnstile',
-            'iframe[title*="widget"]'
-        ]
-        
-        for selector in turnstile_selectors:
-            element = await page.query_selector(selector)
-            if element:
-                if PROXY_VERBOSE:
-                    print(f"  TURNSTILE: Phát hiện challenge với selector: {selector}")
-                return True
-        
-        # Kiểm tra trong page content
-        content = await page.content()
-        turnstile_indicators = [
-            'challenges.cloudflare.com',
-            'cf-turnstile',
-            'turnstile',
-            'data-sitekey',
-            'cloudflare challenge'
-        ]
-        
-        for indicator in turnstile_indicators:
-            if indicator.lower() in content.lower():
-                if PROXY_VERBOSE:
-                    print(f"  TURNSTILE: Phát hiện challenge trong content: {indicator}")
-                return True
-                
-        return False
-    except Exception as e:
-        if PROXY_VERBOSE:
-            print(f"  TURNSTILE: Lỗi khi phát hiện challenge: {str(e)}")
-        return False
-
-async def wait_for_turnstile_completion(page, timeout=60000):
-    """Chờ Turnstile challenge hoàn thành"""
-    try:
-        if PROXY_VERBOSE:
-            print("  TURNSTILE: Đang chờ challenge hoàn thành...")
-        
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout / 1000:
-            # Kiểm tra xem page đã redirect hoặc thay đổi chưa
-            current_url = page.url
-            
-            # Chờ một chút
-            await page.wait_for_timeout(2000)
-            
-            # Kiểm tra lại URL
-            new_url = page.url
-            if new_url != current_url:
-                if PROXY_VERBOSE:
-                    print(f"  TURNSTILE: URL đã thay đổi từ {current_url} -> {new_url}")
-                return True
-            
-            # Kiểm tra xem challenge còn tồn tại không
-            has_challenge = await detect_turnstile_challenge(page)
-            if not has_challenge:
-                if PROXY_VERBOSE:
-                    print("  TURNSTILE: Challenge đã biến mất, có thể đã hoàn thành")
-                return True
-            
-            # Thử click vào các element có thể là Turnstile widget
-            try:
-                turnstile_widget = await page.query_selector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #cf-turnstile')
-                if turnstile_widget:
-                    await turnstile_widget.click()
-                    await page.wait_for_timeout(3000)
-            except:
-                pass
-        
-        return False
-    except Exception as e:
-        if PROXY_VERBOSE:
-            print(f"  TURNSTILE: Lỗi khi chờ completion: {str(e)}")
-        return False
-
 async def bypass_turnstile_with_playwright(target_url: str, client_referer: Optional[str] = None, retries: int = 3):
-    """Bypass Turnstile sử dụng Playwright với stealth mode"""
-    
+    """Bypass Turnstile bằng cách tick vào checkbox nếu có"""
     for attempt in range(retries):
         log_prefix = f"TURNSTILE_BYPASS (Attempt {attempt + 1}/{retries}) '{target_url}'"
         if client_referer:
             log_prefix += f" (Referer: '{client_referer}')"
-        
         print(log_prefix)
-        
         try:
             async with async_playwright() as p:
-                # Tạo browser với args để tránh phát hiện
-                browser_args = [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--disable-gpu',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding',
-                    '--disable-features=TranslateUI',
-                    '--disable-ipc-flooding-protection',
-                    '--enable-features=NetworkService,NetworkServiceLogging',
-                    '--force-device-scale-factor=1',
-                    '--hide-scrollbars',
-                    '--mute-audio',
-                    '--disable-extensions',
-                    '--disable-plugins',
-                    '--disable-images'  # Tăng tốc độ load
-                ]
-                
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=browser_args
-                )
-                
-                # Tạo context với cấu hình anti-detection
+                browser = await p.chromium.launch(headless=True)
                 context_options = {
                     'user_agent': get_random_user_agent(),
                     'viewport': {'width': 1920, 'height': 1080},
                     'locale': 'en-US',
-                    'timezone_id': 'America/New_York',
-                    'permissions': [],
-                    'extra_http_headers': {
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.5',
-                        'Accept-Encoding': 'gzip, deflate, br',
-                        'DNT': '1',
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1',
-                        'Sec-Fetch-Dest': 'document',
-                        'Sec-Fetch-Mode': 'navigate',
-                        'Sec-Fetch-Site': 'none',
-                        'Cache-Control': 'max-age=0'
-                    }
+                    'timezone_id': 'America/New_York'
                 }
-                
-                # Thêm proxy nếu có
                 proxy_config = get_playwright_proxy_config()
                 if proxy_config:
                     context_options['proxy'] = proxy_config
                     print(f"  TURNSTILE: Proxy configured: {proxy_config['server']}")
-                
                 context = await browser.new_context(**context_options)
-                
-                # Apply stealth mode
                 page = await context.new_page()
                 if STEALTH_MODE:
                     await stealth_async(page)
-                
-                # Set additional headers
                 if client_referer:
                     await page.set_extra_http_headers({'Referer': client_referer})
-                
-                # Override webdriver detection
-                await page.add_init_script("""
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined,
-                    });
-                    
-                    // Override the plugins property to use a custom getter
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5],
-                    });
-                    
-                    // Override languages
-                    Object.defineProperty(navigator, 'languages', {
-                        get: () => ['en-US', 'en'],
-                    });
-                    
-                    // Override permissions
-                    const originalQuery = window.navigator.permissions.query;
-                    window.navigator.permissions.query = (parameters) => (
-                        parameters.name === 'notifications' ?
-                            Promise.resolve({ state: Notification.permission }) :
-                            originalQuery(parameters)
-                    );
-                """)
-                
-                # Random delay để tránh pattern detection
-                await page.wait_for_timeout(random.randint(2000, 5000))
-                
-                if PROXY_VERBOSE:
-                    print(f"  TURNSTILE: Đang truy cập {target_url}...")
-                
-                # Truy cập trang
-                response = await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
-                
-                # Chờ trang load hoàn toàn
-                await page.wait_for_timeout(3000)
-                
-                # Kiểm tra Turnstile challenge
-                has_turnstile = await detect_turnstile_challenge(page)
-                
-                if has_turnstile:
-                    if PROXY_VERBOSE:
-                        print("  TURNSTILE: Phát hiện challenge, đang xử lý...")
-                    
-                    # Chờ challenge completion
-                    success = await wait_for_turnstile_completion(page, TURNSTILE_TIMEOUT)
-                    
-                    if not success:
-                        print(f"  TURNSTILE: Timeout sau {TURNSTILE_TIMEOUT}ms")
-                        await browser.close()
-                        continue
-                    
-                    # Chờ thêm một chút sau khi challenge hoàn thành
-                    await page.wait_for_timeout(3000)
-                
-                # Chờ network idle để đảm bảo trang load hoàn toàn
+                await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
+                await page.wait_for_timeout(random.randint(1000,2000))
+
+                # Tìm iframe chứa Turnstile checkbox
+                iframe_element = await page.query_selector('iframe[src*="challenges.cloudflare.com"]')
+                if iframe_element:
+                    box = await iframe_element.bounding_box()
+                    if box:
+                        # Di chuyển chuột tới chính giữa checkbox
+                        await page.mouse.move(box['x'] + box['width']/2, box['y'] + box['height']/2)
+                        await page.wait_for_timeout(random.randint(300, 800))
+                        await page.mouse.click(box['x'] + box['width']/2, box['y'] + box['height']/2)
+                        await page.wait_for_timeout(random.randint(2000, 3500))
+                        print("  TURNSTILE: Đã tick vào checkbox.")
+
+                # Đợi xác thực hoàn tất, có thể cần refresh hoặc chờ chuyển trang
+                await page.wait_for_timeout(2000)
                 try:
-                    await page.wait_for_load_state('networkidle', timeout=10000)
+                    await page.wait_for_load_state('networkidle', timeout=7000)
                 except:
                     pass
-                
-                # Lấy nội dung cuối cùng
+
                 content = await page.content()
                 final_url = page.url
-                
                 await browser.close()
-                
-                # Kiểm tra xem có bypass thành công không
+
+                # Nếu không còn challenge nữa thì trả về luôn
                 if 'challenge' not in content.lower() and 'checking your browser' not in content.lower():
-                    if PROXY_VERBOSE:
-                        print(f"  TURNSTILE: SUCCESS - Bypass thành công cho '{target_url}' -> '{final_url}'")
+                    print(f"  TURNSTILE: SUCCESS - Đã vượt qua captcha.")
                     return content.encode('utf-8'), 'text/html; charset=utf-8', 200, None, final_url
                 else:
-                    print(f"  TURNSTILE: FAIL - Vẫn có challenge trong content (Attempt {attempt + 1})")
+                    print(f"  TURNSTILE: FAIL - Vẫn còn challenge (Attempt {attempt + 1})")
                     if attempt < retries - 1:
-                        await asyncio.sleep(random.randint(5, 10))  # Random delay trước retry
+                        await asyncio.sleep(random.randint(2, 5))
                         continue
-                
         except Exception as e:
             error_msg = f"TURNSTILE_ERROR (Attempt {attempt + 1}): {str(e)}"
             print(error_msg)
             if attempt < retries - 1:
-                await asyncio.sleep(random.randint(3, 7))
+                await asyncio.sleep(random.randint(2, 5))
                 continue
             return None, None, 500, error_msg, None
-    
-    # Tất cả attempts đều fail
     error_msg = f"TURNSTILE_FAIL: Không thể bypass sau {retries} attempts cho '{target_url}'"
     print(error_msg)
     return None, None, 500, error_msg, None
