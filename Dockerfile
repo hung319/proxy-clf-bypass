@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Cài đặt dependencies hệ thống cần thiết cho Playwright
+# Cài đặt system dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -32,20 +32,20 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy requirements và cài đặt Python packages
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Cài đặt Playwright browsers
+# Cài đặt Playwright
 RUN python -m playwright install chromium
 RUN python -m playwright install-deps
 
-# Copy source code
 COPY . .
 
-# Make setup script executable
-RUN chmod +x setup_playwright.sh
+# Environment variables cho Turnstile bypass
+ENV STEALTH_MODE=true
+ENV TURNSTILE_TIMEOUT=60000
+ENV MAX_TURNSTILE_RETRIES=3
 
 EXPOSE 5000
 
-CMD ["python", "proxy_server.py"]
+CMD ["python", "proxy_server_advanced.py"]
