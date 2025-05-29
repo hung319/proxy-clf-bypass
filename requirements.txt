@@ -3,3 +3,5 @@ uvicorn[standard]>=0.17.0
 cloudscraper>=1.2.0
 PySocks>=1.7.0
 gunicorn>=20.0
+playwright>=1.40.0
+asyncio-throttle>=1.0.2
