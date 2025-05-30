@@ -1,11 +1,9 @@
 from fastapi import FastAPI, Request, Response as FastAPIResponse, Header, Query, HTTPException
 from typing import Optional
 import os
-import traceback
 import uvicorn
 import asyncio
 import random
-import time
 from playwright.async_api import async_playwright
 from playwright_stealth import stealth_async
 from fake_useragent import UserAgent
@@ -19,27 +17,20 @@ SOCKS5_PROXY_PORT_STR = os.environ.get('SOCKS5_PROXY_PORT')
 SOCKS5_PROXY_PORT = int(SOCKS5_PROXY_PORT_STR) if SOCKS5_PROXY_PORT_STR and SOCKS5_PROXY_PORT_STR.isdigit() else None
 SOCKS5_USERNAME = os.environ.get('SOCKS5_USERNAME')
 SOCKS5_PASSWORD = os.environ.get('SOCKS5_PASSWORD')
-
 APP_LISTEN_PORT = int(os.environ.get('APP_PORT', '5000'))
 PROXY_VERBOSE_STR = os.environ.get('PROXY_VERBOSE_LOGGING', 'false').lower()
 PROXY_VERBOSE = PROXY_VERBOSE_STR == 'true'
-
 EXPECTED_API_KEY = os.environ.get('PROXY_API_KEY')
-
-# Cấu hình cho Turnstile bypass
 TURNSTILE_TIMEOUT = int(os.environ.get('TURNSTILE_TIMEOUT', '60000'))  # 60 giây
 MAX_TURNSTILE_RETRIES = int(os.environ.get('MAX_TURNSTILE_RETRIES', '3'))
 STEALTH_MODE = os.environ.get('STEALTH_MODE', 'true').lower() == 'true'
 
-# User Agent pool
 ua = UserAgent()
 
 def get_random_user_agent():
-    """Tạo user agent ngẫu nhiên"""
     return ua.random
 
 def get_playwright_proxy_config():
-    """Lấy cấu hình proxy cho Playwright"""
     if SOCKS5_PROXY_HOST and SOCKS5_PROXY_PORT:
         proxy_config = {
             'server': f'{SOCKS5_PROXY_HOST}:{SOCKS5_PROXY_PORT}'
@@ -51,12 +42,8 @@ def get_playwright_proxy_config():
     return None
 
 async def bypass_turnstile_with_playwright(target_url: str, client_referer: Optional[str] = None, retries: int = 3):
-    """Bypass Turnstile bằng cách tick vào checkbox nếu có"""
     for attempt in range(retries):
-        log_prefix = f"TURNSTILE_BYPASS (Attempt {attempt + 1}/{retries}) '{target_url}'"
-        if client_referer:
-            log_prefix += f" (Referer: '{client_referer}')"
-        print(log_prefix)
+        print(f"TURNSTILE_BYPASS (Attempt {attempt+1}/{retries}) '{target_url}'")
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
@@ -77,24 +64,31 @@ async def bypass_turnstile_with_playwright(target_url: str, client_referer: Opti
                 if client_referer:
                     await page.set_extra_http_headers({'Referer': client_referer})
                 await page.goto(target_url, wait_until='domcontentloaded', timeout=30000)
-                await page.wait_for_timeout(random.randint(1000,2000))
+                await page.wait_for_timeout(random.randint(1000, 2000))
 
-                # Tìm iframe chứa Turnstile checkbox
+                # Scroll nhẹ để giả người
+                await page.evaluate("window.scrollBy(0, 300)")
+                await page.wait_for_timeout(random.randint(200, 600))
+
                 iframe_element = await page.query_selector('iframe[src*="challenges.cloudflare.com"]')
                 if iframe_element:
                     box = await iframe_element.bounding_box()
                     if box:
-                        # Di chuyển chuột tới chính giữa checkbox
+                        # Di chuyển chuột tự nhiên quanh checkbox
+                        for _ in range(random.randint(4, 10)):
+                            x = box['x'] + random.uniform(0, box['width'])
+                            y = box['y'] + random.uniform(0, box['height'])
+                            await page.mouse.move(x, y, steps=random.randint(3, 8))
+                            await page.wait_for_timeout(random.randint(80, 220))
                         await page.mouse.move(box['x'] + box['width']/2, box['y'] + box['height']/2)
                         await page.wait_for_timeout(random.randint(300, 800))
                         await page.mouse.click(box['x'] + box['width']/2, box['y'] + box['height']/2)
-                        await page.wait_for_timeout(random.randint(2000, 3500))
+                        await page.wait_for_timeout(random.randint(2000, 4000))
                         print("  TURNSTILE: Đã tick vào checkbox.")
 
-                # Đợi xác thực hoàn tất, có thể cần refresh hoặc chờ chuyển trang
-                await page.wait_for_timeout(2000)
+                await page.wait_for_timeout(3000)
                 try:
-                    await page.wait_for_load_state('networkidle', timeout=7000)
+                    await page.wait_for_load_state('networkidle', timeout=10000)
                 except:
                     pass
 
@@ -102,7 +96,6 @@ async def bypass_turnstile_with_playwright(target_url: str, client_referer: Opti
                 final_url = page.url
                 await browser.close()
 
-                # Nếu không còn challenge nữa thì trả về luôn
                 if 'challenge' not in content.lower() and 'checking your browser' not in content.lower():
                     print(f"  TURNSTILE: SUCCESS - Đã vượt qua captcha.")
                     return content.encode('utf-8'), 'text/html; charset=utf-8', 200, None, final_url
@@ -122,25 +115,16 @@ async def bypass_turnstile_with_playwright(target_url: str, client_referer: Opti
     print(error_msg)
     return None, None, 500, error_msg, None
 
-# Hàm xác thực API Key
 def validate_api_key(request: Request, x_api_key: Optional[str], auth_token: Optional[str]):
     if EXPECTED_API_KEY:
         actual_client_api_key = x_api_key or auth_token
-        auth_method = "N/A"
-        if x_api_key: 
-            auth_method = "header 'X-API-Key'"
-        elif auth_token: 
-            auth_method = "query param 'auth_token'"
-
         if not actual_client_api_key:
             print(f"AUTH_FAIL: Yêu cầu bị từ chối. Thiếu API key. IP: {request.client.host if request.client else 'N/A'}")
             raise HTTPException(status_code=401, detail="Lỗi: Thiếu API key.")
-        
         if actual_client_api_key != EXPECTED_API_KEY:
             print(f"AUTH_FAIL: API Key không hợp lệ. IP: {request.client.host if request.client else 'N/A'}")
             raise HTTPException(status_code=403, detail="Lỗi: API key không hợp lệ.")
 
-# Route cho Turnstile bypass
 @app.get("/turnstile-bypass", response_class=FastAPIResponse)
 async def turnstile_bypass_handler(
     request: Request,
@@ -155,7 +139,6 @@ async def turnstile_bypass_handler(
     if not url:
         raise HTTPException(status_code=400, detail="Lỗi: Thiếu tham số 'url'.")
 
-    # Validate retries
     actual_retries = retries or MAX_TURNSTILE_RETRIES
     if actual_retries > 5:
         actual_retries = 5
@@ -169,7 +152,6 @@ async def turnstile_bypass_handler(
     if error_message and not content:
         raise HTTPException(status_code=status_code or 500, detail=error_message)
     
-    # Thêm headers thông tin
     headers = {}
     if final_url and final_url != url:
         headers['X-Final-URL'] = final_url
@@ -183,7 +165,6 @@ async def turnstile_bypass_handler(
         headers=headers
     )
 
-# Route status
 @app.get("/status")
 def status_handler():
     return {
