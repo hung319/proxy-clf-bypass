@@ -28,4 +28,4 @@ ENV DEV_MODE="false"
 EXPOSE 5000
 
 # Chỉ chạy 1 worker Uvicorn để tiết kiệm RAM (có thể scale bằng container nếu cần)
-CMD ["/bin/sh", "-c", "exec gunicorn proxy_server:app --workers 1 --worker-class uvicorn.workers.UvicornWorker --bind \"0.0.0.0:$APP_PORT\" --timeout 60 --log-level warning"]
+CMD ["/bin/sh", "-c", "exec gunicorn proxy_server:app --workers 1 --worker-class uvicorn.workers.UvicornWorker --bind \"0.0.0.0:$APP_PORT\" --log-level warning"]
