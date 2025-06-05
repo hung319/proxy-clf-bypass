@@ -30,4 +30,4 @@ EXPOSE 5000
 # Lệnh để chạy ứng dụng khi container khởi động
 # Sử dụng Gunicorn để quản lý 5 Uvicorn workers
 # /bin/sh -c để đảm bảo biến $APP_PORT được thay thế đúng cách
-CMD ["/bin/sh", "-c", "exec gunicorn proxy_server:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind \"0.0.0.0:$APP_PORT\" --log-level warning"]
+CMD ["/bin/sh", "-c", "exec gunicorn proxy_server:app --workers 1 --worker-class uvicorn.workers.UvicornWorker --bind \"0.0.0.0:$APP_PORT\" --log-level warning"]
