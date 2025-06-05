@@ -1,45 +1,31 @@
-FROM python:3.9-alpine
+# Base image nhỏ và an toàn hơn
+FROM python:3.9-slim
 
-# Không tạo file bytecode + luôn hiển thị log
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# Tối ưu cài đặt
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
 
-# Cài các dependencies cần thiết để build và chạy cloudscraper
-RUN apk update && apk add --no-cache \
-    build-base \
-    gcc \
-    musl-dev \
-    libffi-dev \
-    openssl-dev \
-    python3-dev \
-    py3-pip \
-    curl \
-    libxml2-dev \
-    libxslt-dev \
-    libressl-dev \
-    libjpeg-turbo-dev \
-    zlib-dev \
-    && rm -rf /var/cache/apk/*
+# Cài đặt các package tối thiểu
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential gcc curl && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Đặt thư mục làm việc
 WORKDIR /app
 
-# Sao chép và cài đặt requirements trước để cache Docker layer
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir --upgrade pip \
- && pip install --no-cache-dir -r requirements.txt
+# Cài đặt thư viện cần thiết
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    rm -rf ~/.cache
 
-# Sao chép toàn bộ mã nguồn
 COPY . .
 
-# Biến môi trường mặc định
 ENV APP_PORT=5000
 ENV PROXY_VERBOSE_LOGGING="false"
 ENV DEV_MODE="false"
 
-# Mở cổng ứng dụng
 EXPOSE 5000
 
-# Chạy app bằng Gunicorn + Uvicorn Worker (1 worker nhẹ)
+# Chỉ chạy 1 worker Uvicorn để tiết kiệm RAM (có thể scale bằng container nếu cần)
 CMD ["/bin/sh", "-c", "exec gunicorn proxy_server:app --workers 1 --worker-class uvicorn.workers.UvicornWorker --bind \"0.0.0.0:$APP_PORT\" --timeout 60 --log-level warning"]
