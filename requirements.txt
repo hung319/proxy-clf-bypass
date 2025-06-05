@@ -1,4 +1,5 @@
-fastapi
-uvicorn
-cloudscraper
-requests[socks]
+fastapi>=0.80.0
+uvicorn[standard]>=0.17.0 
+cloudscraper>=1.2.0
+PySocks>=1.7.0
+gunicorn>=20.0
