@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
 # Khởi tạo FastAPI app với lifespan
 app = FastAPI(
     title="Optimized Cloudscraper Proxy API", 
-    version="2.0.0",
+    version="2.1.0", # Cập nhật phiên bản với thay đổi mới
     lifespan=lifespan
 )
 
@@ -75,7 +75,7 @@ class StatusResponse(BaseModel):
 
 # --- API Endpoint ---
 
-# Route mới để kiểm tra status
+# Route để kiểm tra status
 @app.get("/status", response_model=StatusResponse, tags=["Server Status"])
 async def get_server_status():
     """
@@ -83,16 +83,20 @@ async def get_server_status():
     """
     return {"status": "ok", "message": "Server is up and running!"}
 
+# Route proxy chính - ĐÃ CẬP NHẬT
 @app.get("/", response_class=FastAPIResponse)
 async def proxy_handler(
     request: Request,
-    url: str = Query(..., description="URL to proxy"), # Dùng ... để yêu cầu tham số là bắt buộc
+    url: str = Query(..., description="URL to proxy"),
     referer: Optional[str] = Query(None, description="Optional Referer header"),
-    x_api_key: Optional[str] = Header(None, alias="X-API-Key")
+    key: Optional[str] = Query(None, description="API Key for access") # << ĐÃ THAY ĐỔI
 ):
-    # Xác thực API Key
-    if settings.expected_api_key and x_api_key != settings.expected_api_key:
-        raise HTTPException(status_code=403, detail="Invalid or missing API Key.")
+    # Xác thực API Key từ tham số URL 'key'
+    if settings.expected_api_key:
+        if key is None:
+            raise HTTPException(status_code=401, detail="API Key is missing from URL query. Please add '&key=YOUR_KEY'.")
+        if key != settings.expected_api_key:
+            raise HTTPException(status_code=403, detail="Invalid API Key.")
 
     # Lấy scraper đã được tạo sẵn từ app state
     scraper_instance = request.app.state.scraper
@@ -112,14 +116,12 @@ async def fetch_url_content(
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
         'Accept': '*/*',
         'Accept-Language': 'en-US,en;q=0.9',
-        # Bỏ 'Connection': 'close' để tận dụng keep-alive, tăng tốc độ cho các request liên tiếp
     }
     if referer:
         headers['Referer'] = referer
 
     try:
         # FastAPI sẽ tự động chạy hàm đồng bộ này trong một thread pool
-        # mà không block event loop chính, nhờ đó vẫn xử lý được nhiều request
         response = scraper.get(target_url, headers=headers, allow_redirects=True, timeout=20)
         response.raise_for_status() # Ném lỗi cho các status code 4xx/5xx
 
@@ -127,14 +129,12 @@ async def fetch_url_content(
 
     except Exception as e:
         logger.error(f"Error fetching {target_url}: {e}", exc_info=settings.proxy_verbose_logging)
-        # Ném lại lỗi để endpoint có thể xử lý và trả về status code phù hợp
         raise HTTPException(status_code=502, detail=f"Failed to fetch upstream URL. Error: {e}")
 
 # --- Local run ---
 if __name__ == "__main__":
     import uvicorn
-    logger.info(f"🚀 Starting server in DEV_MODE at http://0.0.0.0:{settings.app_port}")
-    # Đổi tên file từ "proxy_server" thành tên file của bạn nếu cần
+    logger.info(f"🚀 Starting server in {'DEV_MODE' if settings.dev_mode else 'PROD_MODE'} at http://0.0.0.0:{settings.app_port}")
     uvicorn.run(
         "__main__:app", 
         host="0.0.0.0", 
